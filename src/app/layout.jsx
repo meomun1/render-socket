@@ -6,7 +6,6 @@ const Layout = ({ children }) => {
       <html lang="en">
 			<head>
 				<title>Solant</title>
-				<link rel="icon" href="" sizes="any" />
 			</head>
 			<body>
                 {children}
