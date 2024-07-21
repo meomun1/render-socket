@@ -1,75 +1,119 @@
-import express from 'express'
-import { createServer } from 'http'
-import { Server } from 'socket.io'
+import express from 'express';
+import { createServer } from 'http';
+import { Server } from 'socket.io';
 
-const app = express()
-const server = createServer(app)
+const app = express();
+const server = createServer(app);
 const io = new Server(server, {
-	cors: {
-		origin: '*', // Adjust as needed for production
-		methods: ['GET', 'POST'],
-	},
-})
+    cors: {
+        origin: '*', // Adjust as needed for production
+        methods: ['GET', 'POST'],
+    },
+});
 
-let players = {}
-let playerCount = 0
+let players = {};
+let rooms = {};
 
 io.on('connection', (socket) => {
-	console.log('a user connected:', socket.id)
+    console.log('a user connected:', socket.id);
 
-	// Check if there are already 2 players connected
-	if (playerCount < 2) {
-		playerCount++
-		let playerNumber = playerCount
-		console.log('playerNumber:', playerNumber)
+    socket.on('getRooms', () => {
+        socket.emit('rooms', rooms);
+    });
 
-		players[socket.id] = {
-			playerId: socket.id,
-			playerNumber: playerNumber,
-			// y: config.height / 5,
-			// x: config.width / 2,
-		}
+    socket.on('joinRoom', (data) => {
 
-		// Send current players to new player
-		socket.emit('currentPlayers', players)
+        const roomNumber = String(data.room);
 
-		// Notify other players about new player
-		socket.broadcast.emit('newPlayer', players[socket.id])
-	} else {
-		socket.emit('gameFull')
-	}
+        const room = rooms[roomNumber] || { players: {}, playerCount: 0 };
 
-	socket.on('playerMovement', (movementData) => {
-		if (players[socket.id]) {
-			players[socket.id].x = movementData.x
-			players[socket.id].y = movementData.y
-			// Broadcast to other players
-			socket.broadcast.emit('playerMoved', players[socket.id])
-		}
-	})
+        if (room.playerCount < 2) {
+            room.playerCount++;
+            room.players[socket.id] = {
+                playerId: socket.id,
+                playerNumber: room.playerCount,
+            };
 
-	socket.on('playerAnimation', (data) => {
-		// Broadcast the animation change to all other clients
-		socket.broadcast.emit('playerAnimation', data)
-		console.log('playerAnimation', data.animationKey)
-	})
+            rooms[roomNumber] = room;
 
-	// Server-side code
-	socket.on('shootBullet', (bulletData) => {
-		socket.broadcast.emit('opponentShootBullet', bulletData)
-	})
+            socket.join(roomNumber);
+            socket.emit('joinedRoom', { roomNumber, playerInfo: room.players[socket.id] });
+        } else {
+            socket.emit('roomFull');
+        }
+    });
 
-	socket.on('disconnect', () => {
-		console.log('user disconnected:', socket.id)
-		if (players[socket.id]) {
-			delete players[socket.id]
-			playerCount--
-			io.emit('playerDisconnected', socket.id)
-		}
-	})
-})
+    socket.on('playerLoadInRoom', (data) => {
+        const roomNumber = String(data.roomNumber);
+        console.log('playerLoadInRoom received for room:', roomNumber);
+        if (rooms[roomNumber]) {
+            // Emit to the current socket's room only
+            io.to(roomNumber).emit('roomState', rooms[roomNumber].players);
+    
+            // Notify others in the room about the player who just loaded in, excluding the sender
+            socket.to(roomNumber).emit('opponentLoadInRoom', rooms[roomNumber].players[socket.id]);
+        }
+    });
+    
+    socket.on('playerReady', (data) => {
+        const roomNumber = String(data.roomNumber);
+        if (rooms[roomNumber]) {
+            socket.to(roomNumber).emit('opponentReady', rooms[roomNumber].players[socket.id]);
+        }
+    });
 
-const PORT = process.env.PORT || 3000
+    socket.on('playerInGame', (data) => {
+        const roomNumber = String(data.roomNumber);
+        if (rooms[roomNumber]) {
+            io.to(roomNumber).emit('currentPlayers', rooms[roomNumber].players);
+        }
+    });
+
+    socket.on('playerMovement', (movementData) => {
+        Object.keys(rooms).forEach((roomNumber) => {
+            if (rooms[roomNumber].players[socket.id]) {
+                rooms[roomNumber].players[socket.id].x = movementData.x;
+                rooms[roomNumber].players[socket.id].y = movementData.y;
+                socket.to(roomNumber).emit('playerMoved', rooms[roomNumber].players[socket.id]);
+            }
+        });
+    });
+
+    socket.on('playerAnimation', (data) => {
+        Object.keys(rooms).forEach((roomNumber) => {
+            if (rooms[roomNumber].players[socket.id]) {
+                socket.to(roomNumber).emit('playerAnimation', data);
+                console.log('playerAnimation', data.animationKey);
+            }
+        });
+    });
+
+    socket.on('shootBullet', (bulletData) => {
+        Object.keys(rooms).forEach((roomNumber) => {
+            if (rooms[roomNumber].players[socket.id]) {
+                socket.to(roomNumber).emit('opponentShootBullet', bulletData);
+            }
+        });
+    });
+
+    socket.on('disconnect', () => {
+        console.log('user disconnected:', socket.id);
+        Object.keys(rooms).forEach((roomNumber) => {
+            const room = rooms[roomNumber];
+            if (room && room.players[socket.id]) {
+                delete room.players[socket.id];
+                room.playerCount--;
+                if (room.playerCount === 0) {
+                    delete rooms[roomNumber];
+                } else {
+                    io.to(roomNumber).emit('playerDisconnected', socket.id);
+                }
+            }
+        });
+    });
+});
+
+const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-	console.log(`Server running on port ${PORT}`)
-})
+    console.log(`Server running on port ${PORT}`);
+});
