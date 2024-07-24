@@ -64,36 +64,46 @@ io.on('connection', (socket) => {
 
     socket.on('playerInGame', (data) => {
         const roomNumber = String(data.roomNumber);
+        console.log(`playerInGame event received from socket ID: ${socket.id} for room:`, roomNumber);
         if (rooms[roomNumber]) {
-            io.to(roomNumber).emit('currentPlayers', rooms[roomNumber].players);
+            console.log('Room exists. Checking if player is already in game for socket ID:', socket.id);
+            if (rooms[roomNumber].players[socket.id]) {
+                if (!rooms[roomNumber].players[socket.id].alreadyInGame) {
+                    console.log('Player not marked as in game yet. Marking as in game and emitting currentPlayers.');
+                    rooms[roomNumber].players[socket.id].alreadyInGame = true; // Mark as in game
+                    io.to(socket.id).emit('currentPlayers', rooms[roomNumber].players);
+                } else {
+                    console.log('Player already marked as in game. Skipping emission.');
+                }
+            }
         }
     });
 
     socket.on('playerMovement', (movementData) => {
-        Object.keys(rooms).forEach((roomNumber) => {
-            if (rooms[roomNumber].players[socket.id]) {
-                rooms[roomNumber].players[socket.id].x = movementData.x;
-                rooms[roomNumber].players[socket.id].y = movementData.y;
-                socket.to(roomNumber).emit('playerMoved', rooms[roomNumber].players[socket.id]);
-            }
-        });
+        const roomNumber = String(movementData.roomNumber);
+        if (rooms[roomNumber] && rooms[roomNumber].players[socket.id]) {
+            // Update player position
+            rooms[roomNumber].players[socket.id].x = movementData.x;
+            rooms[roomNumber].players[socket.id].y = movementData.y;
+            // Emit to all in the room except the sender
+            socket.to(roomNumber).emit('playerMoved', rooms[roomNumber].players[socket.id]);
+        }
     });
 
     socket.on('playerAnimation', (data) => {
-        Object.keys(rooms).forEach((roomNumber) => {
-            if (rooms[roomNumber].players[socket.id]) {
-                socket.to(roomNumber).emit('playerAnimation', data);
-                console.log('playerAnimation', data.animationKey);
-            }
-        });
+        const roomNumber = String(data.roomNumber);
+        if (rooms[roomNumber] && rooms[roomNumber].players[socket.id]) {
+            // Emit player animation to all in the room except the sender
+            socket.to(roomNumber).emit('playerAnimation', data);
+        }
     });
 
     socket.on('shootBullet', (bulletData) => {
-        Object.keys(rooms).forEach((roomNumber) => {
-            if (rooms[roomNumber].players[socket.id]) {
-                socket.to(roomNumber).emit('opponentShootBullet', bulletData);
-            }
-        });
+        const roomNumber = String(bulletData.roomNumber);
+        if (rooms[roomNumber] && rooms[roomNumber].players[socket.id]) {
+            // Emit bullet data to all in the room except the sender
+            socket.to(roomNumber).emit('opponentShootBullet', bulletData);
+        }
     });
 
     socket.on('disconnect', () => {
